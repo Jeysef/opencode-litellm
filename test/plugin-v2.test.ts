@@ -57,6 +57,25 @@ describe('OpenCode 2 plugin entrypoint', () => {
     expect(legacy.event).toEqual(expect.any(Function))
   })
 
+  it('does nothing when the host context has no provider API', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('setup must not probe the network without a provider API')
+    })
+    // OpenCode 1.18.x embeds a v2 plugin host whose context exposes `catalog`
+    // instead of `provider`; the legacy `server()` entrypoint serves that host.
+    const context = {
+      options: {},
+      catalog: { transform: vi.fn(), reload: vi.fn() },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+
+    expect(cleanup).toBeUndefined()
+    expect(log).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('registers discovered LiteLLM models through the provider transform', async () => {
     cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-test-'))
     process.env.XDG_CACHE_HOME = cacheDirectory

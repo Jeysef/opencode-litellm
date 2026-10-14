@@ -487,6 +487,12 @@ async function reconcileProviderSources(
 const definition = Plugin.define({
   id: 'opencode-litellm',
   async setup(context) {
+    // OpenCode 1.18.x embeds a v2 plugin host whose context has no `provider`
+    // domain. It still calls `setup` on any plugin that exports one, but those
+    // versions are served by the `server()` entrypoint below. Bail out before
+    // touching the logger so `server()`'s client-backed logging stays intact.
+    if (!context.provider) return
+
     initV2Logging()
 
     const pluginOptions = asRecord(context.options)
