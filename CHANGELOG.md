@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/yuseferi/opencode-litellm/compare/v1.4.2...v1.4.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **v2:** skip setup when the host context has no provider API ([#39](https://github.com/yuseferi/opencode-litellm/issues/39)) ([d352039](https://github.com/yuseferi/opencode-litellm/commit/d3520397b0b98093a9babdba1feeb6b6c5d95f47))
+
 ## [1.4.2](https://github.com/yuseferi/opencode-litellm/compare/v1.4.1...v1.4.2) (2026-09-30)
 
 
