@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/yuseferi/opencode-litellm/compare/v1.4.3...v1.5.0) (2026-10-15)
+
+
+### Features
+
+* route LiteLLM Responses-API models to /v1/responses ([#40](https://github.com/yuseferi/opencode-litellm/issues/40)) ([41a05bd](https://github.com/yuseferi/opencode-litellm/commit/41a05bd7596061454ea77e1334a18ea091713144))
+
 ## [1.4.3](https://github.com/yuseferi/opencode-litellm/compare/v1.4.2...v1.4.3) (2026-10-14)
 
 
