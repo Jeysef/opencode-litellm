@@ -8,7 +8,7 @@ import { join } from 'node:path'
  * from older plugin versions are ignored rather than deserialized into
  * an incompatible structure.
  */
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 
 /**
  * Maximum age of a cache entry before it's treated as a miss. Without a
@@ -23,6 +23,12 @@ interface ModelCacheFile {
   version: number
   savedAt: number
   models: Record<string, unknown>
+  /**
+   * Model ids that must be invoked through the OpenAI Responses API. Kept
+   * alongside `models` because the provider-config entries themselves carry
+   * no transport marker (their shape is the user-facing OpenCode config).
+   */
+  responsesIds?: string[]
 }
 
 /**
@@ -105,6 +111,30 @@ export function buildCacheKey(
 }
 
 /**
+ * Read and validate a cache file once. Returns `null` on any problem
+ * (missing file, parse error, version mismatch, or a missing `models`
+ * block). Every reader below shares this so a caller that needs both the
+ * models and the Responses ids parses the file a single time.
+ */
+function readCacheFile(cacheKey: string): ModelCacheFile | null {
+  try {
+    const raw = readFileSync(cacheFile(cacheKey), 'utf8')
+    const parsed = JSON.parse(raw) as ModelCacheFile
+    if (parsed.version !== CACHE_VERSION) return null
+    if (!parsed.models || typeof parsed.models !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/** Keep only the string entries of a cached `responsesIds` list. */
+function normalizeResponsesIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((id): id is string => typeof id === 'string')
+}
+
+/**
  * Read cached model entries for a cache key. Returns `null` on any
  * problem (missing file, parse error, version mismatch, or an entry
  * older than `CACHE_MAX_AGE_MS`) — the caller treats that as a cache
@@ -113,21 +143,35 @@ export function buildCacheKey(
 export function readModelCache(
   cacheKey: string,
 ): Record<string, unknown> | null {
-  try {
-    const raw = readFileSync(cacheFile(cacheKey), 'utf8')
-    const parsed = JSON.parse(raw) as ModelCacheFile
-    if (parsed.version !== CACHE_VERSION) return null
-    if (!parsed.models || typeof parsed.models !== 'object') return null
-    if (
-      typeof parsed.savedAt !== 'number' ||
-      Date.now() - parsed.savedAt > CACHE_MAX_AGE_MS
-    ) {
-      return null
-    }
-    return parsed.models
-  } catch {
+  const parsed = readCacheFile(cacheKey)
+  if (!parsed) return null
+  if (
+    typeof parsed.savedAt !== 'number' ||
+    Date.now() - parsed.savedAt > CACHE_MAX_AGE_MS
+  ) {
     return null
   }
+  return parsed.models
+}
+
+/**
+ * Read the models and Responses-API model ids for a cache key in one
+ * parse. Returns `null` under the same conditions as
+ * {@link readModelCache} (missing/expired cache), so the two can't
+ * disagree within a single lookup.
+ */
+export function readModelCacheEntry(
+  cacheKey: string,
+): { models: Record<string, unknown>; responsesIds: string[] } | null {
+  const parsed = readCacheFile(cacheKey)
+  if (!parsed) return null
+  if (
+    typeof parsed.savedAt !== 'number' ||
+    Date.now() - parsed.savedAt > CACHE_MAX_AGE_MS
+  ) {
+    return null
+  }
+  return { models: parsed.models, responsesIds: normalizeResponsesIds(parsed.responsesIds) }
 }
 
 /**
@@ -136,15 +180,20 @@ export function readModelCache(
  * background refreshes so still-fresh caches aren't re-fetched.
  */
 export function readModelCacheSavedAt(cacheKey: string): number | null {
-  try {
-    const raw = readFileSync(cacheFile(cacheKey), 'utf8')
-    const parsed = JSON.parse(raw) as ModelCacheFile
-    if (parsed.version !== CACHE_VERSION) return null
-    if (typeof parsed.savedAt !== 'number') return null
-    return parsed.savedAt
-  } catch {
-    return null
-  }
+  const parsed = readCacheFile(cacheKey)
+  if (!parsed || typeof parsed.savedAt !== 'number') return null
+  return parsed.savedAt
+}
+
+/**
+ * Return the cached Responses-API model ids for a cache key. Returns an
+ * empty array on any problem (missing file, parse error, version
+ * mismatch), matching {@link readModelCache}'s miss semantics.
+ */
+export function readModelCacheResponsesIds(cacheKey: string): string[] {
+  const parsed = readCacheFile(cacheKey)
+  if (!parsed) return []
+  return normalizeResponsesIds(parsed.responsesIds)
 }
 
 /**
@@ -154,6 +203,7 @@ export function readModelCacheSavedAt(cacheKey: string): number | null {
 export function writeModelCache(
   cacheKey: string,
   models: Record<string, unknown>,
+  responsesIds: readonly string[] = [],
 ): void {
   try {
     mkdirSync(cacheDir(), { recursive: true })
@@ -161,6 +211,7 @@ export function writeModelCache(
       version: CACHE_VERSION,
       savedAt: Date.now(),
       models,
+      responsesIds: [...responsesIds],
     }
     // Write to a temp file and rename so concurrent OpenCode processes
     // never observe a partially-written JSON file (rename is atomic on
