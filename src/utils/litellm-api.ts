@@ -137,6 +137,27 @@ export async function discoverLiteLLMModelInfo(
       }
     }
 
+    // Some deployments (notably e-infra) publish token limits under
+    // non-standard names: the context window as `model_info.context_size`
+    // and the output cap as `litellm_params.extra_body.max_completion_tokens`
+    // (falling back to `extra_body.max_tokens`). Fill only the gaps — when
+    // the standard fields are present they win, so a deployment migrating to
+    // the common names keeps working unchanged. `extra_body.max_tokens` must
+    // map to the OUTPUT cap: `toConfigModel` falls back to `max_tokens` for
+    // the context window, so routing an output cap there would shrink the
+    // reported context window.
+    if (info.max_input_tokens == null && typeof info.context_size === 'number') {
+      info.max_input_tokens = info.context_size
+    }
+    if (info.max_output_tokens == null) {
+      const extraBody = entry.litellm_params?.extra_body
+      if (typeof extraBody === 'object' && extraBody !== null && !Array.isArray(extraBody)) {
+        const caps = extraBody as { max_completion_tokens?: unknown; max_tokens?: unknown }
+        const outputCap = caps.max_completion_tokens ?? caps.max_tokens
+        if (typeof outputCap === 'number') info.max_output_tokens = outputCap
+      }
+    }
+
     info.supports_reasoning_efforts = resolveReasoningEfforts(info, entry.litellm_params)
 
     // Index under every alias LiteLLM may use for this model — the

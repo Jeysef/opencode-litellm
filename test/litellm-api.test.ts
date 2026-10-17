@@ -178,6 +178,76 @@ describe('reasoning-effort discovery', () => {
   })
 })
 
+describe('non-standard token-limit fields', () => {
+  // Some deployments (e-infra) publish limits under non-standard names.
+  // The gap-fill must only act when the standard fields are absent, so a
+  // deployment migrating to the common names keeps working unchanged.
+  const entry = (info: Record<string, unknown>, params: Record<string, unknown> = {}) =>
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      data: [{ model_name: 'test-model', model_info: info, litellm_params: params }],
+    })))
+
+  it.each([
+    {
+      name: 'fills the context window from model_info.context_size',
+      info: { context_size: 1048576 },
+      params: { extra_body: { max_completion_tokens: 64000 } },
+      expected: { max_input_tokens: 1048576, max_output_tokens: 64000 },
+      absent: [],
+    },
+    {
+      name: 'keeps standard max_input_tokens over context_size (migrated deployment)',
+      info: { max_input_tokens: 131072, context_size: 1048576 },
+      params: { extra_body: { max_completion_tokens: 64000 } },
+      expected: { max_input_tokens: 131072, max_output_tokens: 64000 },
+      absent: [],
+    },
+    {
+      name: 'keeps standard max_output_tokens over extra_body (migrated deployment)',
+      info: { max_output_tokens: 32000 },
+      params: { extra_body: { max_completion_tokens: 64000 } },
+      expected: { max_output_tokens: 32000 },
+      absent: ['max_input_tokens'],
+    },
+    {
+      name: 'prefers extra_body.max_completion_tokens over max_tokens',
+      info: { context_size: 1048576 },
+      params: { extra_body: { max_completion_tokens: 64000, max_tokens: 32000 } },
+      expected: { max_input_tokens: 1048576, max_output_tokens: 64000 },
+      absent: [],
+    },
+    {
+      name: 'falls back to extra_body.max_tokens for the output cap only',
+      info: { context_size: 1048576 },
+      params: { extra_body: { max_tokens: 64000 } },
+      expected: { max_input_tokens: 1048576, max_output_tokens: 64000 },
+      absent: ['max_tokens'],
+    },
+    {
+      name: 'ignores non-numeric limit values',
+      info: { context_size: '1M' },
+      params: { extra_body: { max_tokens: '64k' } },
+      expected: {},
+      absent: ['max_input_tokens', 'max_output_tokens'],
+    },
+    {
+      name: 'ignores a malformed extra_body block',
+      info: { context_size: 1048576 },
+      params: { extra_body: ['max_tokens', 64000] },
+      expected: { max_input_tokens: 1048576 },
+      absent: ['max_output_tokens'],
+    },
+  ])('$name', async ({ info, params, expected, absent }) => {
+    entry(info, params)
+    const discovered = await discoverLiteLLMModelInfo('https://proxy.example.com', 'test-key')
+    const model = discovered.get('test-model')
+    expect(model).toMatchObject(expected)
+    for (const key of absent) {
+      expect(model?.[key as keyof NonNullable<typeof model>]).toBeUndefined()
+    }
+  })
+})
+
 describe('restricted reasoning models', () => {
   // LiteLLM's Pro entries omit supports_low_reasoning_effort, and older
   // entries even report minimal=true despite the provider's restricted set.

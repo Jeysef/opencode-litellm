@@ -54,6 +54,7 @@
 
 ### Features
 
+* **e-infra distribution** (`opencode-plugin-litellm-einfra`): fill token limits from e-infra's non-standard fields — `model_info.context_size` for the context window, `litellm_params.extra_body.max_completion_tokens` (fallback `max_tokens`) for the output cap — only when the standard `max_input_tokens`/`max_output_tokens` fields are absent, so a migration to the common names needs no plugin change
 * register a LiteLLM integration with OpenCode 2's connect-provider dialog so gateways can be connected entirely from the web UI (API key plus an optional base URL/provider id form), with the stored key used for discovery and injected by OpenCode at request time
 * route models LiteLLM reports with `mode: "responses"` through the OpenAI Responses API (per-model runtime package on OpenCode 2; a `<provider>-responses` sibling on OpenCode 1)
 * support the OpenCode 2 API with the OpenCode 1 server entrypoint

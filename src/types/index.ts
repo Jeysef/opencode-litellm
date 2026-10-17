@@ -63,6 +63,12 @@ export interface LiteLLMModelInfo {
   max_tokens?: number
   max_input_tokens?: number
   max_output_tokens?: number
+  /**
+   * Non-standard context-window field published by some deployments
+   * (e.g. e-infra) instead of `max_input_tokens`. Read only as a gap-fill —
+   * the standard field always wins when present.
+   */
+  context_size?: number
   supports_function_calling?: boolean
   supports_vision?: boolean
   supports_reasoning?: boolean

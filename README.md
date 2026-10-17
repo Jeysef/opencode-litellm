@@ -31,6 +31,17 @@ Auto-detect a running LiteLLM proxy, pull every model from `/v1/models`, and reg
 > **npm package:** `opencode-plugin-litellm` &nbsp;·&nbsp; **GitHub repo:** `yuseferi/opencode-litellm`
 > The unscoped `opencode-litellm` npm name was already taken by another author.
 
+> **🔷 e-infra distribution:** this branch builds `opencode-plugin-litellm-einfra`,
+> an e-infra-specific distribution of the plugin. Install it with
+> `opencode plugin add 'github:Jeysef/opencode-litellm#einfra'` (pin with the
+> branch-head hash for reproducibility). On top of the upstream feature set it
+> fills token limits from e-infra's non-standard fields —
+> `model_info.context_size` for the context window and
+> `litellm_params.extra_body.max_completion_tokens` (fallback
+> `max_tokens`) for the output cap — **only when the standard
+> `max_input_tokens`/`max_output_tokens` fields are absent**. If e-infra
+> migrates to the common names, the plugin keeps working unchanged.
+
 > **✅ OpenCode V1 + V2 support:** OpenCode **2.0.19** uses native
 > `Plugin.define`, provider-registry model discovery, and in-process refresh.
 > OpenCode **1.18.29+** uses the legacy `server()` entrypoint. Both versions

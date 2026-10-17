@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "opencode-plugin-litellm",
-  "version": "1.5.0",
-  "description": "OpenCode CLI (v1 and v2) and Desktop plugin for LiteLLM proxy support with auto-detection and dynamic model discovery",
+  "name": "opencode-plugin-litellm-einfra",
+  "version": "1.5.0-einfra.1",
+  "description": "OpenCode CLI (v1 and v2) plugin for LiteLLM proxy support with auto-detection and dynamic model discovery — e-infra distribution with non-standard token-limit support",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -28,12 +28,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yuseferi/opencode-litellm.git"
+    "url": "git+https://github.com/Jeysef/opencode-litellm.git"
   },
   "bugs": {
-    "url": "https://github.com/yuseferi/opencode-litellm/issues"
+    "url": "https://github.com/Jeysef/opencode-litellm/issues"
   },
-  "homepage": "https://github.com/yuseferi/opencode-litellm#readme",
+  "homepage": "https://github.com/Jeysef/opencode-litellm#readme",
   "publishConfig": {
     "access": "public",
     "provenance": true
