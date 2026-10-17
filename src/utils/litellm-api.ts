@@ -2,7 +2,11 @@ import type { LiteLLMModel, LiteLLMModelInfo, LiteLLMModelInfoResponse, LiteLLMM
 import { CAPABILITY_FLAGS } from './model-capabilities'
 import { resolveReasoningEfforts } from './reasoning-efforts'
 
-export const DEFAULT_LITELLM_URL = 'http://localhost:4000'
+const DEFAULT_LITELLM_URL = 'http://localhost:4000'
+
+/** Ports probed when no explicit base URL is configured — the default
+ * `litellm --port` is 4000, with 8000 and 8080 also common. */
+export const LITELLM_PROBE_PORTS = [4000, 8000, 8080]
 const MODELS_ENDPOINT = '/v1/models'
 const MODEL_INFO_ENDPOINT = '/v1/model/info'
 // Health checks fail fast so auto-detection stays snappy; the actual
@@ -178,15 +182,14 @@ export async function discoverLiteLLMModelInfo(
 }
 
 /**
- * Use an explicit LITELLM_BASE_URL when set; otherwise try the most common
- * ports. The default `litellm --port` is 4000, with 8000 and 8080 also common.
+ * Use an explicit LITELLM_BASE_URL when set; otherwise probe the common
+ * ports (`LITELLM_PROBE_PORTS`).
  */
 export async function autoDetectLiteLLM(apiKey?: string, customHeaders?: Record<string, string>): Promise<string | null> {
   const configuredBaseURL = process.env.LITELLM_BASE_URL?.trim()
   if (configuredBaseURL) return normalizeBaseURL(configuredBaseURL)
 
-  const commonPorts = [4000, 8000, 8080]
-  for (const port of commonPorts) {
+  for (const port of LITELLM_PROBE_PORTS) {
     const baseURL = `http://localhost:${port}`
     if (await checkLiteLLMHealth(baseURL, apiKey, customHeaders)) {
       return baseURL

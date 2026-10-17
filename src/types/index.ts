@@ -84,7 +84,7 @@ export interface LiteLLMModelInfo {
 }
 
 /** A single entry returned by LiteLLM's `/v1/model/info` endpoint. */
-export interface LiteLLMModelInfoEntry {
+interface LiteLLMModelInfoEntry {
   model_name: string
   litellm_params?: Record<string, unknown>
   model_info?: LiteLLMModelInfo

@@ -6,7 +6,7 @@ export const CAPABILITY_FLAGS = [
   'supports_audio_input',
 ] as const
 
-export type CapabilityFlag = (typeof CAPABILITY_FLAGS)[number]
+type CapabilityFlag = (typeof CAPABILITY_FLAGS)[number]
 
 /**
  * Per-model boolean capability overrides keyed by exact model id

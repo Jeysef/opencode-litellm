@@ -1,6 +1,7 @@
 import type { Context } from '@opencode/plugin/promise/plugin'
 
 import { logInfo } from '../utils/log'
+import { errorMessage } from '../utils/errors'
 
 /**
  * Integration id the plugin registers with OpenCode's connect-provider dialog.
@@ -78,7 +79,7 @@ export async function registerLiteLLMIntegration(
       })
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     logInfo(`Could not register the connect dialog integration: ${message}`)
     return undefined
   }

@@ -4,7 +4,7 @@ import type { PluginInput } from '@opencode-ai/plugin'
 import {
   DISCOVERY_TIMEOUT_MS,
   discoverModels,
-  initV2Logging,
+  disableClientLogWriter,
   isLiteLLMProvider,
   readCustomHeaders,
   readFormatModelNames,
@@ -24,8 +24,9 @@ import {
   readModelCacheSavedAt,
   writeModelCache,
 } from '../utils/model-cache'
-import { normalizeBaseURL, autoDetectLiteLLM } from '../utils/litellm-api'
+import { normalizeBaseURL, autoDetectLiteLLM, LITELLM_PROBE_PORTS } from '../utils/litellm-api'
 import { logInfo } from '../utils/log'
+import { errorMessage } from '../utils/errors'
 import { parseModelCapabilities } from '../utils/model-capabilities'
 import type { ModelCapabilities } from '../utils/model-capabilities'
 import type { ModelFilters } from '../utils/model-filter'
@@ -436,7 +437,7 @@ async function refreshProviderSource(
         `Refreshed ${models.length} models for provider "${source.id}"; the provider registry was reloaded.`,
       )
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       logInfo(`Background refresh failed for provider "${source.id}": ${message}`)
     } finally {
       if (inFlight.get(source.cacheKey) === refresh) inFlight.delete(source.cacheKey)
@@ -462,7 +463,7 @@ async function refreshConnectionCredential(
     source.apiKey = apiKey
     return true
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     logInfo(`Could not refresh credentials for provider "${source.id}": ${message}`)
     return false
   }
@@ -479,7 +480,7 @@ async function refreshProviderSources(
       await context.provider.reload()
       for (const source of pendingCredentialReload) source.credentialReloadRequired = false
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       logInfo(`Could not reload providers after a credential switch: ${message}`)
       return
     }
@@ -504,7 +505,7 @@ async function listMatchingProviders(context: Context): Promise<ProviderInfo[]> 
       isLiteLLMProvider(provider.id, asRecord(provider.settings)),
     )
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     logInfo(`Could not read configured providers: ${message}`)
     return []
   }
@@ -590,7 +591,7 @@ async function publishConnectedSource(
       `Registered provider "${source.id}" from the connected LiteLLM credential.`,
     )
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     logInfo(`Could not register the connected provider: ${message}`)
   }
 }
@@ -604,7 +605,7 @@ const definition = Plugin.define({
     // touching the logger so `server()`'s client-backed logging stays intact.
     if (!context.provider) return
 
-    initV2Logging()
+    disableClientLogWriter()
 
     const pluginOptions = asRecord(context.options)
     const sources = new Map<string, ProviderSource>()
@@ -629,7 +630,7 @@ const definition = Plugin.define({
     }
     if (sources.size === 0) {
       logInfo(
-        'No LiteLLM proxy found. Configure providers.litellm.settings.baseURL or start LiteLLM on port 4000/8000/8080.',
+        `No LiteLLM proxy found. Configure providers.litellm.settings.baseURL or start LiteLLM on port ${LITELLM_PROBE_PORTS.join('/')}.`,
       )
     }
 
@@ -712,7 +713,7 @@ const definition = Plugin.define({
       try {
         pending = await reconcileProviderSources(context, pluginOptions, sources)
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         logInfo(`Could not reconcile configured providers: ${message}`)
         return
       }
@@ -726,7 +727,7 @@ const definition = Plugin.define({
       } catch (error) {
         // Leave `pendingPublication` set so the next trigger retries instead of
         // treating these sources as already published.
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         logInfo(
           `Could not reload providers after discovering a new provider; will retry: ${message}`,
         )
@@ -812,7 +813,7 @@ const definition = Plugin.define({
         }
       } catch (error) {
         if (controller.signal.aborted) return
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         logInfo(`Event subscription failed: ${message}`)
       }
     })()

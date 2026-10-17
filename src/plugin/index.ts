@@ -13,6 +13,7 @@ import {
 } from '../utils/format-model-name'
 import { requiresResponsesAPI } from '../utils/transport'
 import { logInfo, logWarn } from '../utils/log'
+import { errorMessage } from '../utils/errors'
 import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 import { getOpenCodeStoredApiKey } from '../utils/opencode-auth'
 import {
@@ -58,8 +59,11 @@ function initLogging(client: PluginInput['client']): void {
   }
 }
 
-/** OpenCode 2 does not expose a server log method through its plugin context. */
-export function initV2Logging(): void {
+/**
+ * OpenCode 2 does not expose a server log method through its plugin
+ * context; without a client the V1 log routing must not run.
+ */
+export function disableClientLogWriter(): void {
   logWriter = null
 }
 
@@ -384,7 +388,7 @@ export async function discoverModels(
     log(
       'warn',
       `[opencode-litellm] Model discovery failed for provider "${providerId}": ` +
-        (error instanceof Error ? error.message : String(error)),
+        (errorMessage(error)),
     )
     return null
   }
@@ -398,7 +402,7 @@ export async function discoverModels(
     log(
       'warn',
       `[opencode-litellm] /v1/model/info unavailable for provider "${providerId}"; non-chat model filtering will use id heuristics only: ` +
-        (reason instanceof Error ? reason.message : String(reason)),
+        errorMessage(reason),
     )
   }
 

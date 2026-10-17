@@ -4,7 +4,7 @@ const PREFIX = '[opencode-litellm]'
  * Plugin-side console logging for the OpenCode 2 modules.
  *
  * OpenCode 2 exposes no log API through the plugin context (unlike OpenCode 1,
- * whose `client.app.log` routes into the host log store — see `initV2Logging`
+ * whose `client.app.log` routes into the host log store — see `disableClientLogWriter`
  * in `plugin/index.ts`). The host does capture console output into its log
  * files, so a single prefixed console write is the house pattern: diagnostics
  * stay out of the TUI's way, remain greppable by the `[opencode-litellm]`
