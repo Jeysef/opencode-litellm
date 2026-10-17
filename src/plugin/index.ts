@@ -12,6 +12,7 @@ import {
   categorizeModel,
 } from '../utils/format-model-name'
 import { requiresResponsesAPI } from '../utils/transport'
+import { logInfo, logWarn } from '../utils/log'
 import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 import { getOpenCodeStoredApiKey } from '../utils/opencode-auth'
 import {
@@ -75,8 +76,8 @@ function log(level: LogLevel, message: string): void {
   }
   // No client wired up (unit tests, unusual embedders) — fall back to
   // the console rather than silently dropping diagnostics.
-  if (level === 'info' || level === 'debug') console.log(message)
-  else console.warn(message)
+  if (level === 'info' || level === 'debug') logInfo(message)
+  else logWarn(message)
 }
 
 /**

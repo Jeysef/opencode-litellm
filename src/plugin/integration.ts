@@ -1,12 +1,6 @@
 import type { Context } from '@opencode/plugin/promise/plugin'
 
-// OpenCode 2 exposes no log API through the plugin context (see
-// initV2Logging); the host captures console output into its log files, so a
-// plain console write with the `[opencode-litellm]` prefix is the house
-// pattern for V2 modules (same as logInfo in plugin/v2.ts).
-function logInfo(message: string): void {
-  console.log(message)
-}
+import { logInfo } from '../utils/log'
 
 /**
  * Integration id the plugin registers with OpenCode's connect-provider dialog.
@@ -85,7 +79,7 @@ export async function registerLiteLLMIntegration(
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    logInfo(`[opencode-litellm] Could not register the connect dialog integration: ${message}`)
+    logInfo(`Could not register the connect dialog integration: ${message}`)
     return undefined
   }
 }

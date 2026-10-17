@@ -25,6 +25,7 @@ import {
   writeModelCache,
 } from '../utils/model-cache'
 import { normalizeBaseURL, autoDetectLiteLLM } from '../utils/litellm-api'
+import { logInfo } from '../utils/log'
 import { parseModelCapabilities } from '../utils/model-capabilities'
 import type { ModelCapabilities } from '../utils/model-capabilities'
 import type { ModelFilters } from '../utils/model-filter'
@@ -335,7 +336,7 @@ async function makeProviderSource(
     }
   } else {
     logInfo(
-      `[opencode-litellm] Loaded ${Object.keys(entries).length} models from cache for provider "${id}" (${baseURL}); refresh happens in the background on new sessions.`,
+      `Loaded ${Object.keys(entries).length} models from cache for provider "${id}" (${baseURL}); refresh happens in the background on new sessions.`,
     )
   }
 
@@ -362,10 +363,6 @@ async function makeProviderSource(
     models: toProviderModels(id, entries ?? {}, new Set(responsesIds)),
     ownedModelIds: new Set<string>(),
   }
-}
-
-function logInfo(message: string): void {
-  console.log(message)
 }
 
 async function refreshProviderSource(
@@ -436,11 +433,11 @@ async function refreshProviderSource(
       writeModelCache(source.cacheKey, discovered.models, discovered.responsesIds)
       source.refreshRequired = false
       logInfo(
-        `[opencode-litellm] Refreshed ${models.length} models for provider "${source.id}"; the provider registry was reloaded.`,
+        `Refreshed ${models.length} models for provider "${source.id}"; the provider registry was reloaded.`,
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      logInfo(`[opencode-litellm] Background refresh failed for provider "${source.id}": ${message}`)
+      logInfo(`Background refresh failed for provider "${source.id}": ${message}`)
     } finally {
       if (inFlight.get(source.cacheKey) === refresh) inFlight.delete(source.cacheKey)
     }
@@ -466,7 +463,7 @@ async function refreshConnectionCredential(
     return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    logInfo(`[opencode-litellm] Could not refresh credentials for provider "${source.id}": ${message}`)
+    logInfo(`Could not refresh credentials for provider "${source.id}": ${message}`)
     return false
   }
 }
@@ -483,7 +480,7 @@ async function refreshProviderSources(
       for (const source of pendingCredentialReload) source.credentialReloadRequired = false
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      logInfo(`[opencode-litellm] Could not reload providers after a credential switch: ${message}`)
+      logInfo(`Could not reload providers after a credential switch: ${message}`)
       return
     }
   }
@@ -508,7 +505,7 @@ async function listMatchingProviders(context: Context): Promise<ProviderInfo[]> 
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    logInfo(`[opencode-litellm] Could not read configured providers: ${message}`)
+    logInfo(`Could not read configured providers: ${message}`)
     return []
   }
 }
@@ -590,11 +587,11 @@ async function publishConnectedSource(
     await context.provider.reload()
     source.pendingPublication = false
     logInfo(
-      `[opencode-litellm] Registered provider "${source.id}" from the connected LiteLLM credential.`,
+      `Registered provider "${source.id}" from the connected LiteLLM credential.`,
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    logInfo(`[opencode-litellm] Could not register the connected provider: ${message}`)
+    logInfo(`Could not register the connected provider: ${message}`)
   }
 }
 
@@ -632,7 +629,7 @@ const definition = Plugin.define({
     }
     if (sources.size === 0) {
       logInfo(
-        '[opencode-litellm] No LiteLLM proxy found. Configure providers.litellm.settings.baseURL or start LiteLLM on port 4000/8000/8080.',
+        'No LiteLLM proxy found. Configure providers.litellm.settings.baseURL or start LiteLLM on port 4000/8000/8080.',
       )
     }
 
@@ -716,7 +713,7 @@ const definition = Plugin.define({
         pending = await reconcileProviderSources(context, pluginOptions, sources)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        logInfo(`[opencode-litellm] Could not reconcile configured providers: ${message}`)
+        logInfo(`Could not reconcile configured providers: ${message}`)
         return
       }
       if (pending.length === 0) return
@@ -724,14 +721,14 @@ const definition = Plugin.define({
         await context.provider.reload()
         for (const source of pending) source.pendingPublication = false
         logInfo(
-          `[opencode-litellm] Registered ${pending.length} newly configured LiteLLM provider(s).`,
+          `Registered ${pending.length} newly configured LiteLLM provider(s).`,
         )
       } catch (error) {
         // Leave `pendingPublication` set so the next trigger retries instead of
         // treating these sources as already published.
         const message = error instanceof Error ? error.message : String(error)
         logInfo(
-          `[opencode-litellm] Could not reload providers after discovering a new provider; will retry: ${message}`,
+          `Could not reload providers after discovering a new provider; will retry: ${message}`,
         )
       }
     }
@@ -816,7 +813,7 @@ const definition = Plugin.define({
       } catch (error) {
         if (controller.signal.aborted) return
         const message = error instanceof Error ? error.message : String(error)
-        logInfo(`[opencode-litellm] Event subscription failed: ${message}`)
+        logInfo(`Event subscription failed: ${message}`)
       }
     })()
 
