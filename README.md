@@ -6,6 +6,8 @@
 
 **[OpenCode](https://opencode.ai) (v1 and v2) plugin for [LiteLLM](https://github.com/BerriAI/litellm) proxies — zero-config auto-detection, dynamic model discovery, and full web-UI connect.**
 
+[![CI](https://github.com/Jeysef/opencode-litellm/actions/workflows/ci.yml/badge.svg)](https://github.com/Jeysef/opencode-litellm/actions/workflows/ci.yml)
+
 Fork of [yuseferi/opencode-litellm](https://github.com/yuseferi/opencode-litellm) (based on v1.5.0) with the
 [connect-provider dialog integration](https://github.com/yuseferi/opencode-litellm/pull/41) and e-infra's
 non-standard token-limit fields.
