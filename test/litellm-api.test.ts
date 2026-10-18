@@ -248,6 +248,58 @@ describe('non-standard token-limit fields', () => {
   })
 })
 
+describe('non-standard capabilities array', () => {
+  // Some deployments (e-infra) annotate models with a non-standard
+  // `capabilities` array (e.g. ["chat", "multimodal", "tools"]) instead of
+  // the standard supports_* booleans. The mapping fills only gaps and never
+  // invents capabilities the array does not claim.
+  const entry = (info: Record<string, unknown>) =>
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      data: [{ model_name: 'test-model', model_info: info }],
+    })))
+
+  it.each([
+    {
+      name: 'maps multimodal to vision support (glm-5.3-flash shape)',
+      info: { capabilities: ['chat', 'multimodal', 'tools'] },
+      expected: { supports_vision: true, supports_function_calling: true },
+      absent: [],
+    },
+    {
+      name: 'glm-5.3-style entry without multimodal stays text-only',
+      info: { capabilities: ['chat', 'tools'] },
+      expected: { supports_function_calling: true },
+      absent: ['supports_vision'],
+    },
+    {
+      name: 'keeps a standard supports_vision over the array (migrated deployment)',
+      info: { capabilities: ['chat', 'multimodal', 'tools'], supports_vision: false },
+      expected: { supports_vision: false, supports_function_calling: true },
+      absent: [],
+    },
+    {
+      name: 'ignores a malformed capabilities value',
+      info: { capabilities: 'multimodal' },
+      expected: {},
+      absent: ['supports_vision', 'supports_function_calling'],
+    },
+    {
+      name: 'does not invent capabilities from unknown array values',
+      info: { capabilities: ['chat', 'embedding'] },
+      expected: {},
+      absent: ['supports_vision', 'supports_function_calling'],
+    },
+  ])('$name', async ({ info, expected, absent }) => {
+    entry(info)
+    const discovered = await discoverLiteLLMModelInfo('https://proxy.example.com', 'test-key')
+    const model = discovered.get('test-model')
+    expect(model).toMatchObject(expected)
+    for (const key of absent) {
+      expect(model?.[key as keyof NonNullable<typeof model>]).toBeUndefined()
+    }
+  })
+})
+
 describe('restricted reasoning models', () => {
   // LiteLLM's Pro entries omit supports_low_reasoning_effort, and older
   // entries even report minimal=true despite the provider's restricted set.

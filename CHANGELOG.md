@@ -17,6 +17,11 @@ Fork packaging and feature consolidation. All upstream v1.5.0 plugin behavior is
   `litellm_params.extra_body.max_completion_tokens` (fallback `extra_body.max_tokens`) →
   `max_output_tokens`, applied only when the standard field names are absent (standard names always
   win, so a future migration to the standard schema needs no plugin change).
+- **e-infra capability mapping**: the non-standard `model_info.capabilities`
+  array (`multimodal`, `tools`) fills `supports_vision` /
+  `supports_function_calling` when the standard booleans are absent — image
+  attachments and tool calls light up for exactly the models the proxy marks
+  accordingly (e.g. glm-5.3-flash yes, glm-5.3 no).
 - npm **git installs** work with `opencode plugin add`: the package ships no `build`/`prepare` scripts
   (OpenCode's npm wrapper cannot run nested installs — anomalyco/opencode#49704).
 

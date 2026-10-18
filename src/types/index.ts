@@ -69,6 +69,12 @@ export interface LiteLLMModelInfo {
    * the standard field always wins when present.
    */
   context_size?: number
+  /**
+   * Non-standard capability annotation (e.g. e-infra publishes
+   * `["chat", "multimodal", "tools"]`). Read only as a gap-fill for the
+   * standard `supports_*` booleans, which always win when present.
+   */
+  capabilities?: unknown
   supports_function_calling?: boolean
   supports_vision?: boolean
   supports_reasoning?: boolean

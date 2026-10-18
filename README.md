@@ -45,6 +45,9 @@ directory loading work) or from an npm-packed tarball of this repo.
   These only **fill gaps**: the standard LiteLLM/OpenAI field names (`max_input_tokens`,
   `max_output_tokens`, `max_tokens`) always win when present, so the plugin keeps working unchanged
   if e-infra migrates to the standard schema.
+- **e-infra capability mapping** — the non-standard `model_info.capabilities` array maps to the
+  standard capability flags the same way (`multimodal` → vision/image input, `tools` → function
+  calling), again only filling gaps when the standard `supports_*` booleans are absent.
 
 ## Configuration
 

@@ -162,6 +162,21 @@ export async function discoverLiteLLMModelInfo(
       }
     }
 
+    // Some deployments (notably e-infra) annotate each model with a
+    // non-standard `capabilities` array (e.g. ["chat", "multimodal",
+    // "tools"]) instead of the standard supports_* booleans. Map the
+    // values we understand, filling only gaps — standard fields, params
+    // flags, and user overrides keep winning, and unknown values are
+    // ignored rather than inventing capabilities.
+    if (Array.isArray(info.capabilities)) {
+      if (info.supports_vision == null && info.capabilities.includes('multimodal')) {
+        info.supports_vision = true
+      }
+      if (info.supports_function_calling == null && info.capabilities.includes('tools')) {
+        info.supports_function_calling = true
+      }
+    }
+
     info.supports_reasoning_efforts = resolveReasoningEfforts(info, entry.litellm_params)
 
     // Index under every alias LiteLLM may use for this model — the
