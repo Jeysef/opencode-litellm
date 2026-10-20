@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/yuseferi/opencode-litellm/compare/v1.5.0...v1.6.0) (2026-10-20)
+
+
+### Features
+
+* **v2:** enable prompt caching for Claude behind LiteLLM ([#44](https://github.com/yuseferi/opencode-litellm/issues/44)) ([d6f6e11](https://github.com/yuseferi/opencode-litellm/commit/d6f6e113ab1275a84e2dfcf65f858ca89345bb4c)), closes [#42](https://github.com/yuseferi/opencode-litellm/issues/42) [#42](https://github.com/yuseferi/opencode-litellm/issues/42)
+
 # [1.5.0](https://github.com/yuseferi/opencode-litellm/compare/v1.4.3...v1.5.0) (2026-10-15)
 
 
