@@ -21,10 +21,24 @@ import {
 import { normalizeBaseURL, autoDetectLiteLLM } from '../utils/litellm-api'
 import { parseModelCapabilities } from '../utils/model-capabilities'
 import type { ModelCapabilities } from '../utils/model-capabilities'
+import {
+  inferCompatibility,
+  parseModelCompatibility,
+  resolveCompatibility,
+} from '../utils/model-compatibility'
+import type { ModelCompatibility } from '../utils/model-compatibility'
 import type { ModelFilters } from '../utils/model-filter'
+import type { ModelHints } from '../utils/model-cache'
 
 const CHAT_PROVIDER_ID = 'litellm'
 const OPENAI_COMPATIBLE_PACKAGE = '@opencode/ai/providers/openai-compatible'
+// Of the packages a LiteLLM provider uses, only the Chat Completions ones read
+// `compatibility.cacheFormat`; `openai` (Responses by default), the Responses
+// packages and the Anthropic packages do not.
+const CHAT_COMPLETIONS_PACKAGES = new Set([
+  OPENAI_COMPATIBLE_PACKAGE,
+  '@opencode/ai/providers/openai/chat',
+])
 // Runtime package that talks to `/v1/responses`. OpenCode 2 lets one model
 // override the provider's package, so Responses models stay under their
 // original provider id and no sibling provider is needed here.
@@ -78,6 +92,7 @@ interface ProviderSource {
   pendingPublication: boolean
   filters: ModelFilters
   capabilities: ModelCapabilities
+  compatibility: ModelCompatibility
   formatModelNames: boolean
   cacheKey: string
   models: Model.Info[]
@@ -111,12 +126,21 @@ function numberOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+interface ToProviderModelsOptions {
+  /** The provider's runtime package; models not overridden inherit it. */
+  providerPackage: string
+  responsesIds: ReadonlySet<string>
+  hints: Record<string, ModelHints>
+  compatibility: ModelCompatibility
+}
+
 function toProviderModels(
   providerID: string,
   entries: Record<string, unknown>,
-  responsesIds: ReadonlySet<string> = new Set<string>(),
+  options: ToProviderModelsOptions,
 ): Model.Info[] {
   const provider = Provider.ID.make(providerID)
+  const { responsesIds, hints, compatibility: overrides } = options
 
   return Object.entries(entries).flatMap(([modelID, value]) => {
     const entry = asRecord(value)
@@ -152,6 +176,11 @@ function toProviderModels(
       id: id as Model.VariantID,
       settings: asRecord(settings),
     })) as Model.Info['variants']
+    const pkg = responsesIds.has(modelID) ? RESPONSES_PACKAGE : options.providerPackage
+    const compatibility = resolveCompatibility(
+      inferCompatibility(hints[modelID], CHAT_COMPLETIONS_PACKAGES.has(pkg)),
+      Object.hasOwn(overrides, modelID) ? overrides[modelID] : undefined,
+    )
     return [
       {
         ...defaults,
@@ -159,6 +188,11 @@ function toProviderModels(
         // runtime package for itself, so it keeps the provider id while
         // still reaching the Responses API.
         ...(responsesIds.has(modelID) ? { package: RESPONSES_PACKAGE } : {}),
+        // `cacheFormat` exists on the host's `Model.Compatibility` (2.0.28+)
+        // but not in the 2.0.15 schema this package compiles against.
+        ...(compatibility
+          ? { compatibility: compatibility as unknown as Model.Info['compatibility'] }
+          : {}),
         name: readString(entry.name) ?? modelID,
         limit: {
           context: numberOrDefault(limit.context, defaults.limit.context),
@@ -228,6 +262,7 @@ function runtimeSettings(source: ProviderSource): Record<string, unknown> {
     'includeModels',
     'excludeModels',
     'modelCapabilities',
+    'modelCompatibility',
     'formatModelNames',
     'providerID',
   ]) {
@@ -277,6 +312,7 @@ async function makeProviderSource(
   const apiKey = configuredApiKey ?? connectedApiKey
   const filters = readModelFilters(settings)
   const capabilities = parseModelCapabilities(settings.modelCapabilities)
+  const compatibility = parseModelCompatibility(settings.modelCompatibility)
   const formatModelNames = readFormatModelNames(settings)
   const detectedBaseURL = configuredBaseURL
     ? normalizeBaseURL(configuredBaseURL)
@@ -293,6 +329,7 @@ async function makeProviderSource(
   const cacheEntry = readModelCacheEntry(cacheKey)
   let entries = cacheEntry?.models ?? null
   let responsesIds = cacheEntry?.responsesIds ?? []
+  let hints = cacheEntry?.hints ?? {}
 
   if (!entries || Object.keys(entries).length === 0) {
     const discovered = await withTimeout(
@@ -310,10 +347,12 @@ async function makeProviderSource(
     if (discovered && Object.keys(discovered.models).length > 0) {
       entries = discovered.models
       responsesIds = discovered.responsesIds
-      writeModelCache(cacheKey, entries, responsesIds)
+      hints = discovered.hints
+      writeModelCache(cacheKey, entries, responsesIds, hints)
     } else {
       entries = null
       responsesIds = []
+      hints = {}
     }
   } else {
     logInfo(
@@ -321,11 +360,12 @@ async function makeProviderSource(
     )
   }
 
+  const providerPackage = provider?.package || OPENAI_COMPATIBLE_PACKAGE
   return {
     id,
     name: provider?.name || 'LiteLLM (proxy)',
     activation: provider?.activation ?? 'enabled',
-    package: provider?.package || OPENAI_COMPATIBLE_PACKAGE,
+    package: providerPackage,
     settings,
     headers: customHeaders,
     integrationID: provider?.integrationID,
@@ -339,9 +379,15 @@ async function makeProviderSource(
     customHeaders: Object.keys(customHeaders).length > 0 ? customHeaders : undefined,
     filters,
     capabilities,
+    compatibility,
     formatModelNames,
     cacheKey,
-    models: toProviderModels(id, entries ?? {}, new Set(responsesIds)),
+    models: toProviderModels(id, entries ?? {}, {
+      providerPackage,
+      responsesIds: new Set(responsesIds),
+      hints,
+      compatibility,
+    }),
     ownedModelIds: new Set<string>(),
   }
 }
@@ -395,13 +441,14 @@ async function refreshProviderSource(
         return
       }
 
-      const models = toProviderModels(
-        source.id,
-        discovered.models,
-        new Set(discovered.responsesIds),
-      )
+      const models = toProviderModels(source.id, discovered.models, {
+        providerPackage: source.package,
+        responsesIds: new Set(discovered.responsesIds),
+        hints: discovered.hints,
+        compatibility: source.compatibility,
+      })
       if (JSON.stringify(models) === JSON.stringify(source.models)) {
-        writeModelCache(source.cacheKey, discovered.models, discovered.responsesIds)
+        writeModelCache(source.cacheKey, discovered.models, discovered.responsesIds, discovered.hints)
         source.refreshRequired = false
         return
       }
@@ -415,7 +462,7 @@ async function refreshProviderSource(
         throw error
       }
 
-      writeModelCache(source.cacheKey, discovered.models, discovered.responsesIds)
+      writeModelCache(source.cacheKey, discovered.models, discovered.responsesIds, discovered.hints)
       source.refreshRequired = false
       logInfo(
         `[opencode-litellm] Refreshed ${models.length} models for provider "${source.id}"; the provider registry was reloaded.`,

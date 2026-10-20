@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LiteLLMPlugin } from '../src/plugin'
-import { buildCacheKey, writeModelCache } from '../src/utils/model-cache'
+import {
+  buildCacheKey,
+  readModelCacheEntry,
+  readModelCacheSavedAt,
+  writeModelCache,
+} from '../src/utils/model-cache'
 import { __resetOpenCodeAuthCacheForTests } from '../src/utils/opencode-auth'
 
 interface ProviderConfig {
@@ -59,7 +64,7 @@ describe('OpenCode 1 config hook', () => {
     process.env.HOME = homeDirectory
   }
 
-  function mockProxy(models: Array<{ id: string; mode?: string }>): void {
+  function mockProxy(models: Array<{ id: string; mode?: string; params?: string[] }>): void {
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input)
       if (url.endsWith('/v1/model/info')) {
@@ -67,7 +72,11 @@ describe('OpenCode 1 config hook', () => {
           JSON.stringify({
             data: models.map((model) => ({
               model_name: model.id,
-              model_info: { key: model.id, mode: model.mode ?? 'chat' },
+              model_info: {
+                key: model.id,
+                mode: model.mode ?? 'chat',
+                supported_openai_params: model.params,
+              },
             })),
           }),
           { status: 200 },
@@ -120,6 +129,52 @@ describe('OpenCode 1 config hook', () => {
       apiKey: 'example-key',
     })
     expect(Object.keys(sibling.models ?? {})).toEqual(['responses-model'])
+  })
+
+  it('persists model hints so an OpenCode 2 start can reuse the shared cache', async () => {
+    useIsolatedState()
+    const baseURL = 'http://127.0.0.1:45557/v1'
+    mockProxy([
+      { id: 'claude', params: ['max_tokens', 'cache_control'] },
+      { id: 'gpt', params: ['max_tokens'] },
+    ])
+
+    await runConfigHook(baseURL)
+
+    const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:45557', {}, {})
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      claude: { acceptsCacheControl: true },
+      gpt: { acceptsCacheControl: false },
+    })
+  })
+
+  it('keeps model hints in the shared cache across a background refresh', async () => {
+    useIsolatedState()
+    const baseURL = 'http://127.0.0.1:45558/v1'
+    mockProxy([{ id: 'claude', params: ['cache_control'] }])
+    const input = { client: { app: { log: vi.fn(async () => {}) } } }
+    const plugin = await LiteLLMPlugin(input as never)
+    const config: OpenCodeConfig = {
+      provider: {
+        litellm: {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'LiteLLM (proxy)',
+          options: { baseURL, apiKey: 'example-key' },
+          models: {},
+        },
+      },
+    }
+    // Cold start, backdated so the next session is allowed to refresh.
+    const started = Date.now()
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(started - 10 * 60 * 1000)
+    await plugin.config!(config as never)
+    dateNow.mockRestore()
+    const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:45558', {}, {})
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+
+    await plugin.event!({ event: { type: 'session.created' } } as never)
+    await vi.waitFor(() => expect(readModelCacheSavedAt(cacheKey)).toBeGreaterThanOrEqual(started))
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
   })
 
   it('creates no sibling provider when no model needs the Responses API', async () => {

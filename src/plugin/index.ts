@@ -14,6 +14,7 @@ import {
 import { requiresResponsesAPI } from '../utils/transport'
 import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 import { getOpenCodeStoredApiKey } from '../utils/opencode-auth'
+import type { ModelHints } from '../utils/model-cache'
 import {
   buildCacheKey,
   readModelCacheEntry,
@@ -331,11 +332,13 @@ export function toConfigModel(
  * `models` is the `{ id -> entry }` map written into an OpenCode provider
  * config (or translated into `Model.Info` on OpenCode 2). `responsesIds`
  * lists the subset that must be invoked through the OpenAI Responses API;
- * callers route those accordingly without inspecting each entry.
+ * callers route those accordingly without inspecting each entry. `hints`
+ * carries per-model upstream facts OpenCode 2 maps to `compatibility`.
  */
 export interface DiscoveredModels {
   models: Record<string, unknown>
   responsesIds: string[]
+  hints: Record<string, ModelHints>
 }
 
 /**
@@ -343,7 +346,7 @@ export interface DiscoveredModels {
  *
  * Pure with respect to plugin config: it performs the network calls,
  * classifies + formats each model, and returns the built entries plus the
- * ids that require the Responses API. The provider's
+ * ids that require the Responses API and per-model hints. The provider's
  * `includeModels`/`excludeModels` filters, `modelCapabilities` overrides and
  * `formatModelNames` choice are applied here (not at merge time) so every
  * path that persists or serves a cache — cold discovery and background
@@ -411,6 +414,7 @@ export async function discoverModels(
 
   const built: Record<string, unknown> = {}
   const responsesIds: string[] = []
+  const hints: Record<string, ModelHints> = {}
   let skipped = 0
   let wildcards = 0
   let filtered = 0
@@ -440,6 +444,10 @@ export async function discoverModels(
     }
     built[model.id] = entry
     if (requiresResponsesAPI(enriched)) responsesIds.push(model.id)
+    const params = info?.supported_openai_params
+    hints[model.id] = {
+      acceptsCacheControl: Array.isArray(params) && params.includes('cache_control'),
+    }
   }
 
   if (unmatched.length > 0) {
@@ -471,7 +479,7 @@ export async function discoverModels(
       ')',
   )
 
-  return { models: built, responsesIds }
+  return { models: built, responsesIds, hints }
 }
 
 /**
@@ -655,7 +663,7 @@ async function backgroundRefresh(cacheKey: string): Promise<void> {
       DISCOVERY_TIMEOUT_MS,
     )
     if (discovered && Object.keys(discovered.models).length > 0) {
-      writeModelCache(cacheKey, discovered.models, discovered.responsesIds)
+      writeModelCache(cacheKey, discovered.models, discovered.responsesIds, discovered.hints)
       log(
         'info',
         `[opencode-litellm] Background-refreshed model cache for ${ctx.baseURL} (${Object.keys(discovered.models).length} models)`,
@@ -913,7 +921,7 @@ export const LiteLLMPlugin: Plugin = async (input: PluginInput) => {
             customHeaders,
           )
           injectedModelIds.set(cacheKey, new Set(added))
-          writeModelCache(cacheKey, discovered.models, discovered.responsesIds)
+          writeModelCache(cacheKey, discovered.models, discovered.responsesIds, discovered.hints)
         }
       }
     },

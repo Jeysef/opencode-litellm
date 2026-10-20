@@ -4,11 +4,24 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
+ * Facts about a discovered model's upstream that OpenCode 2 turns into
+ * `Model.Info.compatibility`. They ride alongside the config-shaped model
+ * entries (which have no field for them) through discovery and the cache.
+ */
+export interface ModelHints {
+  /**
+   * The deployment accepts Anthropic-style `cache_control` markers on
+   * Chat Completions (`supported_openai_params` lists `cache_control`).
+   */
+  acceptsCacheControl: boolean
+}
+
+/**
  * Bump when the shape of a cached model entry changes so stale caches
  * from older plugin versions are ignored rather than deserialized into
  * an incompatible structure.
  */
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 
 /**
  * Maximum age of a cache entry before it's treated as a miss. Without a
@@ -29,6 +42,11 @@ interface ModelCacheFile {
    * no transport marker (their shape is the user-facing OpenCode config).
    */
   responsesIds?: string[]
+  /**
+   * Per-model facts about the upstream that OpenCode 2 needs but that have
+   * no place in a provider-config entry (see `ModelHints`).
+   */
+  hints?: Record<string, ModelHints>
 }
 
 /**
@@ -134,6 +152,18 @@ function normalizeResponsesIds(value: unknown): string[] {
   return value.filter((id): id is string => typeof id === 'string')
 }
 
+/** Keep only well-formed entries of a cached `hints` map. */
+function normalizeHints(value: unknown): Record<string, ModelHints> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, ModelHints> = {}
+  for (const [id, hint] of Object.entries(value as Record<string, unknown>)) {
+    if (!hint || typeof hint !== 'object' || Array.isArray(hint)) continue
+    const { acceptsCacheControl } = hint as Record<string, unknown>
+    out[id] = { acceptsCacheControl: acceptsCacheControl === true }
+  }
+  return out
+}
+
 /**
  * Read cached model entries for a cache key. Returns `null` on any
  * problem (missing file, parse error, version mismatch, or an entry
@@ -155,14 +185,18 @@ export function readModelCache(
 }
 
 /**
- * Read the models and Responses-API model ids for a cache key in one
- * parse. Returns `null` under the same conditions as
- * {@link readModelCache} (missing/expired cache), so the two can't
+ * Read the models, Responses-API model ids and model hints for a cache key
+ * in one parse. Returns `null` under the same conditions as
+ * {@link readModelCache} (missing/expired cache), so the three can't
  * disagree within a single lookup.
  */
 export function readModelCacheEntry(
   cacheKey: string,
-): { models: Record<string, unknown>; responsesIds: string[] } | null {
+): {
+  models: Record<string, unknown>
+  responsesIds: string[]
+  hints: Record<string, ModelHints>
+} | null {
   const parsed = readCacheFile(cacheKey)
   if (!parsed) return null
   if (
@@ -171,7 +205,11 @@ export function readModelCacheEntry(
   ) {
     return null
   }
-  return { models: parsed.models, responsesIds: normalizeResponsesIds(parsed.responsesIds) }
+  return {
+    models: parsed.models,
+    responsesIds: normalizeResponsesIds(parsed.responsesIds),
+    hints: normalizeHints(parsed.hints),
+  }
 }
 
 /**
@@ -204,6 +242,7 @@ export function writeModelCache(
   cacheKey: string,
   models: Record<string, unknown>,
   responsesIds: readonly string[] = [],
+  hints: Record<string, ModelHints> = {},
 ): void {
   try {
     mkdirSync(cacheDir(), { recursive: true })
@@ -212,6 +251,7 @@ export function writeModelCache(
       savedAt: Date.now(),
       models,
       responsesIds: [...responsesIds],
+      hints,
     }
     // Write to a temp file and rename so concurrent OpenCode processes
     // never observe a partially-written JSON file (rename is atomic on

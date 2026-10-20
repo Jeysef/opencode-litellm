@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import plugin from '../src'
 import type { Context } from '@opencode/plugin/promise/plugin'
-import { buildCacheKey, writeModelCache } from '../src/utils/model-cache'
+import {
+  buildCacheKey,
+  readModelCacheEntry,
+  readModelCacheSavedAt,
+  writeModelCache,
+} from '../src/utils/model-cache'
 import { __resetOpenCodeAuthCacheForTests } from '../src/utils/opencode-auth'
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -96,6 +101,7 @@ describe('OpenCode 2 plugin entrypoint', () => {
                   supports_vision: true,
                   supports_reasoning: true,
                   supports_reasoning_efforts: ['low', 'high'],
+                  supported_openai_params: ['max_tokens', 'cache_control', 'reasoning_effort'],
                   input_cost_per_token: 0.000003,
                   output_cost_per_token: 0.000015,
                   cache_read_input_token_cost: 0.000001,
@@ -137,7 +143,7 @@ describe('OpenCode 2 plugin entrypoint', () => {
                   supports_minimal_reasoning_effort: false,
                   supports_xhigh_reasoning_effort: true,
                   reasoning_effort_levels: null,
-                  supported_openai_params: ['reasoning'],
+                  supported_openai_params: ['reasoning', 'cache_control'],
                 },
               },
             ],
@@ -228,6 +234,8 @@ describe('OpenCode 2 plugin entrypoint', () => {
         { id: 'low', settings: { reasoningEffort: 'low' } },
         { id: 'high', settings: { reasoningEffort: 'high' } },
       ],
+      // Chat Completions only emits Anthropic cache markers when told to.
+      compatibility: { cacheFormat: 'anthropic' },
     })
 
     expect(registered[0].models[1]).toMatchObject({
@@ -261,9 +269,233 @@ describe('OpenCode 2 plugin entrypoint', () => {
     expect(registered[0].models[0].package).toBeUndefined()
     expect(registered[0].models[1].package).toBeUndefined()
     expect(registered[0].models[2].package).toBeUndefined()
+    // No `cache_control` reported, or not a Chat Completions model: nothing inferred.
+    expect(registered[0].models[1].compatibility).toBeUndefined()
+    expect(registered[0].models[2].compatibility).toBeUndefined()
+    expect(registered[0].models[3].compatibility).toBeUndefined()
+    const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:44444', {}, {})
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      'anthropic/claude-3-5-sonnet': { acceptsCacheControl: true },
+      'gpt-6-astra': { acceptsCacheControl: false },
+      'gpt-5-search-api': { acceptsCacheControl: false },
+      'company-pro': { acceptsCacheControl: true },
+    })
 
     await cleanup?.()
     expect(disposeTransform).toHaveBeenCalledOnce()
+  })
+
+  it('applies modelCompatibility overrides on top of inferred compatibility', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/model/info')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'claude-direct',
+                model_info: {
+                  key: 'claude-direct',
+                  mode: 'chat',
+                  supported_openai_params: ['cache_control'],
+                },
+              },
+              {
+                model_name: 'claude-bedrock',
+                model_info: {
+                  key: 'claude-bedrock',
+                  mode: 'chat',
+                  supported_openai_params: ['max_tokens'],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(
+        JSON.stringify({ data: [
+          { id: 'claude-direct', object: 'model' },
+          { id: 'claude-bedrock', object: 'model' },
+        ] }),
+        { status: 200 },
+      )
+    })
+
+    const registered: Array<{ info: Record<string, unknown>; models: Array<Record<string, unknown>> }> = []
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: (entry: { info: Record<string, unknown>; models: Array<Record<string, unknown>> }) => {
+        registered.push(entry)
+      },
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const context = {
+      app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+      options: {
+        baseURL: 'http://127.0.0.1:44444/v1',
+        modelCompatibility: {
+          // `null` removes the inferred key.
+          'claude-direct': { cacheFormat: null },
+          // Set where the proxy does not advertise `cache_control`.
+          'claude-bedrock': { cacheFormat: 'anthropic' },
+          // An id the proxy does not list adds no model.
+          unknown: { cacheFormat: 'anthropic' },
+        },
+      },
+      provider: {
+        list: vi.fn(async () => ({ data: [] })),
+        transform: vi.fn(async (transform: (editor: unknown) => void) => {
+          transform(editor as never)
+          return { dispose: vi.fn(async () => {}) }
+        }),
+        reload: vi.fn(async () => {}),
+      },
+      event: { subscribe: () => (async function* () {})() },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+
+    expect(registered).toHaveLength(1)
+    expect(registered[0].models.map((model) => [model.id, model.compatibility])).toEqual([
+      ['claude-direct', undefined],
+      ['claude-bedrock', { cacheFormat: 'anthropic' }],
+    ])
+    // runtimeSettings strips plugin-only options.
+    expect(registered[0].info.settings).not.toHaveProperty('modelCompatibility')
+    await cleanup?.()
+  })
+
+  it('applies compatibility from cached hints without touching the network', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    writeModelCache(
+      buildCacheKey('litellm', 'http://127.0.0.1:44444', {}, {}),
+      { claude: { name: 'Claude' }, qwen: { name: 'Qwen' }, constructor: { name: 'Constructor' } },
+      [],
+      {
+        claude: { acceptsCacheControl: true },
+        qwen: { acceptsCacheControl: true },
+        constructor: { acceptsCacheControl: true },
+      },
+    )
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('the cached path must not hit the network')
+    })
+
+    const registered: Array<{ info: Record<string, unknown>; models: Array<Record<string, unknown>> }> = []
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: (entry: { info: Record<string, unknown>; models: Array<Record<string, unknown>> }) => {
+        registered.push(entry)
+      },
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const context = {
+      app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+      options: {
+        baseURL: 'http://127.0.0.1:44444/v1',
+        modelCompatibility: { qwen: { cacheFormat: 'alibaba' } },
+      },
+      provider: {
+        list: vi.fn(async () => ({ data: [] })),
+        transform: vi.fn(async (transform: (editor: unknown) => void) => {
+          transform(editor as never)
+          return { dispose: vi.fn(async () => {}) }
+        }),
+        reload: vi.fn(async () => {}),
+      },
+      event: { subscribe: () => (async function* () {})() },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(registered[0].models.map((model) => [model.id, model.compatibility])).toEqual([
+      ['claude', { cacheFormat: 'anthropic' }],
+      ['qwen', { cacheFormat: 'alibaba' }],
+      // An id that is also an `Object.prototype` member has no override.
+      ['constructor', { cacheFormat: 'anthropic' }],
+    ])
+    await cleanup?.()
+  })
+
+  it('infers cacheFormat only for Chat Completions runtime packages', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/model/info')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'claude',
+                model_info: { key: 'claude', mode: 'chat', supported_openai_params: ['cache_control'] },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'claude', object: 'model' }] }), { status: 200 })
+    })
+
+    const registered: Array<{ info: Record<string, unknown>; models: Array<Record<string, unknown>> }> = []
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: (entry: { info: Record<string, unknown>; models: Array<Record<string, unknown>> }) => {
+        registered.push(entry)
+      },
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const context = {
+      app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+      options: {},
+      provider: {
+        list: vi.fn(async () => ({
+          data: [
+            // `openai` defaults to the Responses API, which does not read `cacheFormat`.
+            ...[
+              ['litellm-openai', '@opencode/ai/providers/openai'],
+              ['litellm-anthropic', '@opencode/ai/providers/anthropic-compatible'],
+              ['litellm-chat', '@opencode/ai/providers/openai/chat'],
+            ].map(([id, pkg]) => ({
+              id,
+              activation: 'enabled',
+              package: pkg,
+              settings: { baseURL: 'http://127.0.0.1:44444/v1' },
+            })),
+          ],
+        })),
+        transform: vi.fn(async (transform: (editor: unknown) => void) => {
+          transform(editor as never)
+          return { dispose: vi.fn(async () => {}) }
+        }),
+        reload: vi.fn(async () => {}),
+      },
+      event: { subscribe: () => (async function* () {})() },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+
+    expect(registered.map((entry) => [entry.info.id, entry.models[0].compatibility])).toEqual([
+      ['litellm-openai', undefined],
+      ['litellm-anthropic', undefined],
+      ['litellm-chat', { cacheFormat: 'anthropic' }],
+    ])
+    await cleanup?.()
   })
 
   it('uses service environment variables to create the default provider', async () => {
@@ -348,7 +580,20 @@ describe('OpenCode 2 plugin entrypoint', () => {
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input)
       if (url.endsWith('/v1/model/info')) {
-        return new Response(JSON.stringify({ data: [] }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'anthropic/claude-3-5-sonnet',
+                model_info: {
+                  key: 'anthropic/claude-3-5-sonnet',
+                  supported_openai_params: ['cache_control'],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
       }
       return new Response(
         JSON.stringify({ data: [{ id: 'anthropic/claude-3-5-sonnet', object: 'model' }] }),
@@ -361,7 +606,11 @@ describe('OpenCode 2 plugin entrypoint', () => {
       name: 'Configured LiteLLM',
       activation: 'enabled',
       package: '@opencode/ai/providers/openai-compatible',
-      settings: { baseURL: `${baseURL}/v1`, apiKey: 'example-api-key' },
+      settings: {
+        baseURL: `${baseURL}/v1`,
+        apiKey: 'example-api-key',
+        modelCompatibility: { 'anthropic/claude-3-5-sonnet': { cacheFormat: 'alibaba' } },
+      },
       headers: { 'X-Gateway': 'test' },
     }
     const curatedModel = { id: 'curated-model', name: 'Curated model' }
@@ -406,6 +655,8 @@ describe('OpenCode 2 plugin entrypoint', () => {
     expect(configuredProvider.headers).toMatchObject({ 'X-Gateway': 'test' })
     expect(updatedModels.map((model) => model.id)).toContain('curated-model')
     expect(updatedModels.map((model) => model.id)).toContain('anthropic/claude-3-5-sonnet')
+    const discovered = updatedModels.find((model) => model.id === 'anthropic/claude-3-5-sonnet')
+    expect(discovered?.compatibility).toEqual({ cacheFormat: 'alibaba' })
 
     await cleanup?.()
   })
@@ -423,10 +674,37 @@ describe('OpenCode 2 plugin entrypoint', () => {
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input)
       if (url.endsWith('/v1/model/info')) {
-        return new Response(JSON.stringify({ data: [] }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'anthropic/claude-3-5-sonnet',
+                model_info: {
+                  key: 'anthropic/claude-3-5-sonnet',
+                  mode: 'chat',
+                  supported_openai_params: ['cache_control'],
+                },
+              },
+              {
+                model_name: 'vertex/claude-sonnet',
+                model_info: {
+                  key: 'vertex/claude-sonnet',
+                  mode: 'chat',
+                  supported_openai_params: ['cache_control'],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
       }
       return new Response(
-        JSON.stringify({ data: [{ id: 'anthropic/claude-3-5-sonnet', object: 'model' }] }),
+        JSON.stringify({
+          data: [
+            { id: 'anthropic/claude-3-5-sonnet', object: 'model' },
+            { id: 'vertex/claude-sonnet', object: 'model' },
+          ],
+        }),
         { status: 200 },
       )
     })
@@ -452,7 +730,10 @@ describe('OpenCode 2 plugin entrypoint', () => {
     })
     const context = {
       app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
-      options: { baseURL: `${baseURL}/v1` },
+      options: {
+        baseURL: `${baseURL}/v1`,
+        modelCompatibility: { 'anthropic/claude-3-5-sonnet': { cacheFormat: 'alibaba' } },
+      },
       provider: {
         list: vi.fn(async () => ({ data: [] })),
         transform: vi.fn(async (transform: (editor: unknown) => void) => {
@@ -474,10 +755,164 @@ describe('OpenCode 2 plugin entrypoint', () => {
     await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
     expect(registeredModels).toHaveLength(2)
     expect(registeredModels[0].map((model) => model.id)).toEqual(['cached-model'])
-    expect(registeredModels[1].map((model) => model.id)).toEqual([
-      'anthropic/claude-3-5-sonnet',
+    // Inference and the override are both applied on refresh, and the refreshed hints are persisted.
+    expect(registeredModels[1].map((model) => [model.id, model.compatibility])).toEqual([
+      ['anthropic/claude-3-5-sonnet', { cacheFormat: 'alibaba' }],
+      ['vertex/claude-sonnet', { cacheFormat: 'anthropic' }],
     ])
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      'anthropic/claude-3-5-sonnet': { acceptsCacheControl: true },
+      'vertex/claude-sonnet': { acceptsCacheControl: true },
+    })
     await cleanup?.()
+  })
+
+  it('infers no cacheFormat for an Anthropic package, including after a refresh', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-refresh-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    const baseURL = 'http://127.0.0.1:44444'
+    const cacheKey = buildCacheKey('litellm-claude', baseURL, {}, {})
+    const now = Date.now()
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now - 10 * 60 * 1000)
+    writeModelCache(cacheKey, { 'cached-model': { name: 'Cached Model' } }, [], {
+      'cached-model': { acceptsCacheControl: true },
+    })
+    dateNow.mockRestore()
+
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/model/info')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'claude',
+                model_info: { key: 'claude', mode: 'chat', supported_openai_params: ['cache_control'] },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'claude', object: 'model' }] }), { status: 200 })
+    })
+
+    const registeredModels: Array<Array<Record<string, unknown>>> = []
+    let providerTransform: ((editor: unknown) => void) | undefined
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: (entry: { models: Array<Record<string, unknown>> }) => {
+        registeredModels.push(entry.models)
+      },
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const reload = vi.fn(async () => {
+      providerTransform?.(editor)
+    })
+    const context = {
+      app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+      options: {},
+      provider: {
+        list: vi.fn(async () => ({
+          data: [
+            {
+              id: 'litellm-claude',
+              activation: 'enabled',
+              package: '@opencode/ai/providers/anthropic-compatible',
+              settings: { baseURL: `${baseURL}/v1` },
+            },
+          ],
+        })),
+        transform: vi.fn(async (transform: (editor: unknown) => void) => {
+          providerTransform = transform
+          transform(editor)
+          return { dispose: vi.fn(async () => {}) }
+        }),
+        reload,
+      },
+      event: {
+        subscribe: () =>
+          (async function* () {
+            yield { type: 'session.created' }
+          })(),
+      },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+    expect(registeredModels[0].map((model) => model.compatibility)).toEqual([undefined])
+    expect(registeredModels[1].map((model) => model.id)).toEqual(['claude'])
+    expect(registeredModels[1][0].compatibility).toBeUndefined()
+    await cleanup?.()
+  })
+
+  it('keeps hints in the cache when a background refresh finds no changes', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-refresh-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    const baseURL = 'http://127.0.0.1:44444'
+    const cacheKey = buildCacheKey('litellm', baseURL, {}, {})
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/model/info')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                model_name: 'claude',
+                model_info: { key: 'claude', mode: 'chat', supported_openai_params: ['cache_control'] },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'claude', object: 'model' }] }), { status: 200 })
+    })
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const reload = vi.fn(async () => {})
+    const makeContext = (events: Array<{ type: string }>) =>
+      ({
+        app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+        options: { baseURL: `${baseURL}/v1` },
+        provider: {
+          list: vi.fn(async () => ({ data: [] })),
+          transform: vi.fn(async (transform: (editor: unknown) => void) => {
+            transform(editor)
+            return { dispose: vi.fn(async () => {}) }
+          }),
+          reload,
+        },
+        event: {
+          subscribe: () =>
+            (async function* () {
+              yield* events
+            })(),
+        },
+      }) as unknown as Context
+
+    // Cold start, backdated so the next session is allowed to refresh.
+    const started = Date.now()
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(started - 10 * 60 * 1000)
+    const first = await plugin.setup(makeContext([]))
+    dateNow.mockRestore()
+    await first?.()
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+
+    const second = await plugin.setup(makeContext([{ type: 'session.created' }]))
+    await vi.waitFor(() => expect(readModelCacheSavedAt(cacheKey)).toBeGreaterThanOrEqual(started))
+    expect(reload).not.toHaveBeenCalled()
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+    await second?.()
   })
 
   it('registers providers that only appear after setup (provider.updated)', async () => {

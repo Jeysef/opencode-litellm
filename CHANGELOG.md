@@ -48,12 +48,14 @@
 
 ### Bug Fixes
 
+* **v2:** register Chat Completions models whose deployment accepts Anthropic `cache_control` with `compatibility.cacheFormat: "anthropic"` so prompt caching works for Claude behind LiteLLM
 * restore baseline reasoning-effort variants from sparse LiteLLM metadata (including GPT-6 Astra), respect explicit effort lists and disabled levels
 * avoid inferring reasoning-effort variants from negative-only flags or unsupported request parameters
 * constrain inferred GPT-5 Pro effort variants to provider-supported levels, including aliased and dated deployments
 
 ### Features
 
+* **v2:** add the `modelCompatibility` option to set or remove the inferred `cacheFormat` per model
 * route models LiteLLM reports with `mode: "responses"` through the OpenAI Responses API (per-model runtime package on OpenCode 2; a `<provider>-responses` sibling on OpenCode 1)
 * support the OpenCode 2 API with the OpenCode 1 server entrypoint
 * add `formatModelNames` option to keep raw model ids in the picker

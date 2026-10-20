@@ -75,7 +75,33 @@ describe('model cache', () => {
     expect(readModelCacheEntry('entry@http://x')).toEqual({
       models: { chat: {}, responses: {} },
       responsesIds: ['responses'],
+      hints: {},
     })
+  })
+
+  it('round-trips model hints and drops malformed ones', () => {
+    writeModelCache('hints@http://x', { a: {}, b: {} }, [], {
+      a: { acceptsCacheControl: true },
+      b: { acceptsCacheControl: false },
+    })
+    expect(readModelCacheEntry('hints@http://x')?.hints).toEqual({
+      a: { acceptsCacheControl: true },
+      b: { acceptsCacheControl: false },
+    })
+    rewriteCacheFile('hints@http://x', (parsed) => {
+      parsed.hints = { a: { acceptsCacheControl: 'yes' }, b: null, c: [] }
+    })
+    expect(readModelCacheEntry('hints@http://x')?.hints).toEqual({ a: { acceptsCacheControl: false } })
+  })
+
+  it('treats caches that predate the model hints as a miss', () => {
+    writeModelCache(KEY, { m: {} }, ['m'])
+    rewriteCacheFile(KEY, (parsed) => {
+      parsed.version = 3
+      delete parsed.hints
+    })
+    expect(readModelCacheEntry(KEY)).toBeNull()
+    expect(readModelCache(KEY)).toBeNull()
   })
 
   it('ignores cache files written by a different plugin version', () => {

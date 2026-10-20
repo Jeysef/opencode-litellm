@@ -82,6 +82,7 @@ also shows how to configure a provider directly in `opencode.json`.
 | 🌐 **Gateway-friendly** | Supports provider `headers` (and the legacy `customHeaders` option) for proxies behind Cloudflare Access or other API gateways. |
 | 🧩 **Splittable catalog** | `includeModels` / `excludeModels` (glob patterns) let one LiteLLM proxy be divided into several OpenCode providers — e.g. by naming prefix — without hand-maintaining a model list. |
 | 🎚️ **Capability overrides** | `modelCapabilities` forces or retracts per-model capability flags (`supports_vision`, `supports_function_calling`, …) when `/v1/model/info` is unavailable or disagrees with your deployment. |
+| 💾 **Prompt caching (OpenCode 2.0.28+)** | Chat models whose deployment accepts Anthropic `cache_control` markers are registered with `compatibility.cacheFormat: "anthropic"`, so OpenCode 2 places cache breakpoints as it does for a native Anthropic provider. `modelCompatibility` corrects this per model. |
 | ⏱️ **Bounded startup** | Health checks fail fast (3 s); discovery fetches are capped at **15 s** (configurable via `LITELLM_REQUEST_TIMEOUT_MS`) for slow remote proxies. V2 model refresh runs in the background. |
 | 📝 **OpenCode logging** | V1 logs go through OpenCode's log API; V2 logs use the V2 plugin host's console logging. |
 | 🤝 **Non-destructive merge** | Only adds models you don't already have configured. Hand-curated entries are preserved verbatim. |
@@ -423,6 +424,33 @@ By default the plugin prettifies each discovered id into a display name — `ant
 - Like the other options above, `formatModelNames` is part of the cache identity, so toggling it triggers a fresh discovery on the next start instead of serving previously cached names.
 - To rename just a handful of models while keeping smart formatting for the rest, use the per-model `name` override described in [Overriding or curating individual models](#overriding-or-curating-individual-models-optional).
 
+### Prompt caching (`modelCompatibility`)
+
+On OpenCode 2.0.28+ (earlier 2.x releases ignore the setting), the OpenAI-compatible Chat Completions runtime only places Anthropic-style `cache_control` breakpoints when a model declares `compatibility.cacheFormat: "anthropic"`. The plugin sets that for every discovered Chat Completions model whose `/v1/model/info` entry lists `cache_control` under `supported_openai_params` — which LiteLLM reports for Anthropic and Vertex AI Anthropic deployments — so prompt caching keeps working for Claude behind the proxy. Only the Chat Completions runtimes read this setting: the Anthropic Messages runtime adds its own cache breakpoints, and the Responses runtimes do not use it, so models on those packages are left alone.
+
+To correct the inference per model id, set `cacheFormat` to `"anthropic"`, `"alibaba"`, or `null` to remove it:
+
+```jsonc
+{
+  "providers": {
+    "litellm": {
+      "settings": {
+        "baseURL": "http://localhost:4000/v1",
+        "modelCompatibility": {
+          "bedrock/claude-sonnet-4": { "cacheFormat": "anthropic" },
+          "gateway/claude-opus": { "cacheFormat": null }
+        }
+      }
+    }
+  }
+}
+```
+
+- Keys are exact model ids as they appear in `/v1/models` (not globs). Only `cacheFormat`, the one key the plugin sets, is accepted.
+- OpenCode's own `providers.<id>.models.<model>.compatibility` is merged over the plugin's value, so it can add or change a key but not remove one the plugin inferred; that is what `null` here is for.
+- Overrides are applied when models are registered, not during discovery, so changing them does not start a new discovery.
+- Neither applies on OpenCode 1.
+
 ## 🔧 How it works
 
 ```mermaid
@@ -601,6 +629,7 @@ src/
 │   ├── model-cache.ts          # stale-while-revalidate on-disk model cache
 │   ├── model-filter.ts         # includeModels/excludeModels glob filtering
 │   ├── model-capabilities.ts   # per-model capability flag overrides
+│   ├── model-compatibility.ts  # cacheFormat inference and per-model overrides
 │   └── opencode-auth.ts        # fallback to OpenCode's /connect-stored credentials
 └── plugin/
     ├── index.ts                # OpenCode 1 server entry and shared discovery logic
