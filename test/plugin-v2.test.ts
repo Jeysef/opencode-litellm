@@ -101,6 +101,7 @@ describe('OpenCode 2 plugin entrypoint', () => {
                   supports_vision: true,
                   supports_reasoning: true,
                   supports_reasoning_efforts: ['low', 'high'],
+                  supports_adaptive_thinking: true,
                   supported_openai_params: ['max_tokens', 'cache_control', 'reasoning_effort'],
                   input_cost_per_token: 0.000003,
                   output_cost_per_token: 0.000015,
@@ -275,10 +276,14 @@ describe('OpenCode 2 plugin entrypoint', () => {
     expect(registered[0].models[3].compatibility).toBeUndefined()
     const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:44444', {}, {})
     expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
-      'anthropic/claude-3-5-sonnet': { acceptsCacheControl: true },
-      'gpt-6-astra': { acceptsCacheControl: false },
-      'gpt-5-search-api': { acceptsCacheControl: false },
-      'company-pro': { acceptsCacheControl: true },
+      'anthropic/claude-3-5-sonnet': {
+        acceptsCacheControl: true,
+        adaptiveThinking: true,
+        thinkingAlwaysOn: false,
+      },
+      'gpt-6-astra': { acceptsCacheControl: false, adaptiveThinking: false, thinkingAlwaysOn: false },
+      'gpt-5-search-api': { acceptsCacheControl: false, adaptiveThinking: false, thinkingAlwaysOn: false },
+      'company-pro': { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
     })
 
     await cleanup?.()
@@ -379,9 +384,9 @@ describe('OpenCode 2 plugin entrypoint', () => {
       { claude: { name: 'Claude' }, qwen: { name: 'Qwen' }, constructor: { name: 'Constructor' } },
       [],
       {
-        claude: { acceptsCacheControl: true },
-        qwen: { acceptsCacheControl: true },
-        constructor: { acceptsCacheControl: true },
+        claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+        qwen: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+        constructor: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
       },
     )
     globalThis.fetch = vi.fn(async () => {
@@ -495,6 +500,150 @@ describe('OpenCode 2 plugin entrypoint', () => {
       ['litellm-anthropic', undefined],
       ['litellm-chat', { cacheFormat: 'anthropic' }],
     ])
+    await cleanup?.()
+  })
+
+  it('respells effort variants for providers on an Anthropic runtime package', async () => {
+    cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-test-'))
+    process.env.XDG_CACHE_HOME = cacheDirectory
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/model/info')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                // Adaptive thinking, can be switched off: `none` becomes `disabled`.
+                model_name: 'claude-adaptive',
+                model_info: {
+                  key: 'claude-adaptive',
+                  mode: 'chat',
+                  supports_reasoning: true,
+                  supports_adaptive_thinking: true,
+                  reasoning_effort_levels: ['none', 'low', 'max'],
+                  supported_openai_params: ['cache_control', 'reasoning_effort'],
+                },
+              },
+              {
+                // Adaptive thinking that is always on: `none` is dropped.
+                model_name: 'claude-always-on',
+                model_info: {
+                  key: 'claude-always-on',
+                  mode: 'chat',
+                  supports_reasoning: true,
+                  supports_adaptive_thinking: true,
+                  thinking_always_on: true,
+                  reasoning_effort_levels: ['none', 'high'],
+                },
+              },
+              {
+                // No adaptive thinking reported: `reasoningEffort` would be inert, so no variants.
+                model_name: 'claude-manual',
+                model_info: {
+                  key: 'claude-manual',
+                  mode: 'chat',
+                  supports_reasoning: true,
+                  reasoning_effort_levels: ['low', 'high'],
+                },
+              },
+              {
+                // Responses override on the same provider: the OpenAI runtime keeps `reasoningEffort`.
+                model_name: 'gpt-responses',
+                model_info: {
+                  key: 'gpt-responses',
+                  mode: 'responses',
+                  supports_reasoning: true,
+                  supports_adaptive_thinking: true,
+                  reasoning_effort_levels: ['low'],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(
+        JSON.stringify({ data: [
+          { id: 'claude-adaptive', object: 'model' },
+          { id: 'claude-always-on', object: 'model' },
+          { id: 'claude-manual', object: 'model' },
+          { id: 'gpt-responses', object: 'model' },
+        ] }),
+        { status: 200 },
+      )
+    })
+
+    const registered: Array<{ info: Record<string, unknown>; models: Array<Record<string, unknown>> }> = []
+    const editor = {
+      list: () => [],
+      get: () => undefined,
+      add: (entry: { info: Record<string, unknown>; models: Array<Record<string, unknown>> }) => {
+        registered.push(entry)
+      },
+      update: vi.fn(),
+      remove: vi.fn(),
+      models: { set: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    }
+    const context = {
+      app: { name: 'OpenCode', version: '2.0.14', channel: 'stable' },
+      options: { baseURL: 'http://127.0.0.1:44444/v1' },
+      provider: {
+        list: vi.fn(async () => ({
+          data: [
+            {
+              id: 'litellm-claude',
+              name: 'LiteLLM Claude',
+              activation: 'enabled',
+              package: '@opencode/ai/providers/anthropic-compatible',
+              settings: { baseURL: 'http://127.0.0.1:44444/v1' },
+            },
+            {
+              id: 'litellm-anthropic',
+              name: 'LiteLLM Anthropic',
+              activation: 'enabled',
+              package: '@opencode/ai/providers/anthropic',
+              settings: { baseURL: 'http://127.0.0.1:44444/v1' },
+            },
+          ],
+        })),
+        transform: vi.fn(async (transform: (editor: unknown) => void) => {
+          transform(editor as never)
+          return { dispose: vi.fn(async () => {}) }
+        }),
+        reload: vi.fn(async () => {}),
+      },
+      event: { subscribe: () => (async function* () {})() },
+    } as unknown as Context
+
+    const cleanup = await plugin.setup(context)
+
+    expect(registered.map((entry) => entry.info.id)).toEqual(['litellm-claude', 'litellm-anthropic'])
+    expect(registered[0].info).toMatchObject({
+      id: 'litellm-claude',
+      package: '@opencode/ai/providers/anthropic-compatible',
+    })
+    const adaptive = { type: 'adaptive', display: 'summarized' }
+    expect(registered[0].models.map((model) => [model.id, model.variants])).toEqual([
+      [
+        'claude-adaptive',
+        [
+          { id: 'none', settings: { thinking: { type: 'disabled' } } },
+          { id: 'low', settings: { thinking: adaptive, effort: 'low' } },
+          { id: 'max', settings: { thinking: adaptive, effort: 'max' } },
+        ],
+      ],
+      ['claude-always-on', [{ id: 'high', settings: { thinking: adaptive, effort: 'high' } }]],
+      ['claude-manual', []],
+      ['gpt-responses', [{ id: 'low', settings: { reasoningEffort: 'low' } }]],
+    ])
+    // Both Anthropic packages get the same spelling.
+    expect(registered[1].models.map((model) => model.variants)).toEqual(
+      registered[0].models.map((model) => model.variants),
+    )
+    // The Anthropic runtime places cache breakpoints itself; nothing to declare,
+    // even though `claude-adaptive` advertises `cache_control`.
+    const all = registered.flatMap((entry) => entry.models)
+    expect(all.every((model) => model.compatibility === undefined)).toBe(true)
     await cleanup?.()
   })
 
@@ -761,22 +910,33 @@ describe('OpenCode 2 plugin entrypoint', () => {
       ['vertex/claude-sonnet', { cacheFormat: 'anthropic' }],
     ])
     expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
-      'anthropic/claude-3-5-sonnet': { acceptsCacheControl: true },
-      'vertex/claude-sonnet': { acceptsCacheControl: true },
+      'anthropic/claude-3-5-sonnet': {
+        acceptsCacheControl: true,
+        adaptiveThinking: false,
+        thinkingAlwaysOn: false,
+      },
+      'vertex/claude-sonnet': {
+        acceptsCacheControl: true,
+        adaptiveThinking: false,
+        thinkingAlwaysOn: false,
+      },
     })
     await cleanup?.()
   })
 
-  it('infers no cacheFormat for an Anthropic package, including after a refresh', async () => {
+  it('keeps Anthropic variants and no cacheFormat across a background refresh', async () => {
     cacheDirectory = mkdtempSync(join(tmpdir(), 'opencode-litellm-refresh-test-'))
     process.env.XDG_CACHE_HOME = cacheDirectory
     const baseURL = 'http://127.0.0.1:44444'
     const cacheKey = buildCacheKey('litellm-claude', baseURL, {}, {})
     const now = Date.now()
     const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now - 10 * 60 * 1000)
-    writeModelCache(cacheKey, { 'cached-model': { name: 'Cached Model' } }, [], {
-      'cached-model': { acceptsCacheControl: true },
-    })
+    writeModelCache(
+      cacheKey,
+      { 'cached-model': { name: 'Cached Model', variants: { high: { reasoningEffort: 'high' } } } },
+      [],
+      { 'cached-model': { acceptsCacheControl: true, adaptiveThinking: true, thinkingAlwaysOn: false } },
+    )
     dateNow.mockRestore()
 
     globalThis.fetch = vi.fn(async (input) => {
@@ -787,7 +947,14 @@ describe('OpenCode 2 plugin entrypoint', () => {
             data: [
               {
                 model_name: 'claude',
-                model_info: { key: 'claude', mode: 'chat', supported_openai_params: ['cache_control'] },
+                model_info: {
+                  key: 'claude',
+                  mode: 'chat',
+                  supports_reasoning: true,
+                  supports_adaptive_thinking: true,
+                  reasoning_effort_levels: ['high'],
+                  supported_openai_params: ['cache_control'],
+                },
               },
             ],
           }),
@@ -843,9 +1010,15 @@ describe('OpenCode 2 plugin entrypoint', () => {
 
     const cleanup = await plugin.setup(context)
     await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+    const high = [
+      { id: 'high', settings: { thinking: { type: 'adaptive', display: 'summarized' }, effort: 'high' } },
+    ]
+    // Cached hints drive the warm start; discovered hints drive the refresh.
     expect(registeredModels[0].map((model) => model.compatibility)).toEqual([undefined])
+    expect(registeredModels[0].map((model) => model.variants)).toEqual([high])
     expect(registeredModels[1].map((model) => model.id)).toEqual(['claude'])
     expect(registeredModels[1][0].compatibility).toBeUndefined()
+    expect(registeredModels[1][0].variants).toEqual(high)
     await cleanup?.()
   })
 
@@ -906,12 +1079,16 @@ describe('OpenCode 2 plugin entrypoint', () => {
     const first = await plugin.setup(makeContext([]))
     dateNow.mockRestore()
     await first?.()
-    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+    })
 
     const second = await plugin.setup(makeContext([{ type: 'session.created' }]))
     await vi.waitFor(() => expect(readModelCacheSavedAt(cacheKey)).toBeGreaterThanOrEqual(started))
     expect(reload).not.toHaveBeenCalled()
-    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+    })
     await second?.()
   })
 

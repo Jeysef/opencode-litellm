@@ -143,8 +143,8 @@ describe('OpenCode 1 config hook', () => {
 
     const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:45557', {}, {})
     expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
-      claude: { acceptsCacheControl: true },
-      gpt: { acceptsCacheControl: false },
+      claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+      gpt: { acceptsCacheControl: false, adaptiveThinking: false, thinkingAlwaysOn: false },
     })
   })
 
@@ -170,11 +170,15 @@ describe('OpenCode 1 config hook', () => {
     await plugin.config!(config as never)
     dateNow.mockRestore()
     const cacheKey = buildCacheKey('litellm', 'http://127.0.0.1:45558', {}, {})
-    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+    })
 
     await plugin.event!({ event: { type: 'session.created' } } as never)
     await vi.waitFor(() => expect(readModelCacheSavedAt(cacheKey)).toBeGreaterThanOrEqual(started))
-    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({ claude: { acceptsCacheControl: true } })
+    expect(readModelCacheEntry(cacheKey)?.hints).toEqual({
+      claude: { acceptsCacheControl: true, adaptiveThinking: false, thinkingAlwaysOn: false },
+    })
   })
 
   it('creates no sibling provider when no model needs the Responses API', async () => {

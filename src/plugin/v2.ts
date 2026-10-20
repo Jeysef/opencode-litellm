@@ -39,6 +39,11 @@ const CHAT_COMPLETIONS_PACKAGES = new Set([
   OPENAI_COMPATIBLE_PACKAGE,
   '@opencode/ai/providers/openai/chat',
 ])
+const ANTHROPIC_PACKAGES = new Set([
+  '@opencode/ai/providers/anthropic',
+  '@opencode/ai/providers/anthropic-compatible',
+])
+const ADAPTIVE_THINKING = { type: 'adaptive', display: 'summarized' }
 // Runtime package that talks to `/v1/responses`. OpenCode 2 lets one model
 // override the provider's package, so Responses models stay under their
 // original provider id and no sibling provider is needed here.
@@ -126,6 +131,29 @@ function numberOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+/**
+ * Discovery spells every effort level as `{ reasoningEffort }`, which the
+ * OpenAI runtimes read. The Anthropic runtimes read `thinking` and `effort`
+ * instead, so on those packages the levels are respelled the way OpenCode's
+ * own catalog does for adaptive-thinking Claude models. A model that does
+ * not report adaptive thinking gets no variants rather than inert ones.
+ */
+function anthropicVariants(
+  variants: Model.Info['variants'],
+  hints: ModelHints | undefined,
+): Model.Info['variants'] {
+  if (!hints?.adaptiveThinking) return []
+  return variants.flatMap((variant) => {
+    const effort = variant.settings?.reasoningEffort
+    if (typeof effort !== 'string') return []
+    if (effort === 'none') {
+      if (hints.thinkingAlwaysOn) return []
+      return [{ ...variant, settings: { thinking: { type: 'disabled' } } }]
+    }
+    return [{ ...variant, settings: { thinking: ADAPTIVE_THINKING, effort } }]
+  })
+}
+
 interface ToProviderModelsOptions {
   /** The provider's runtime package; models not overridden inherit it. */
   providerPackage: string
@@ -172,11 +200,14 @@ function toProviderModels(
         : []
 
     const rawVariants = asRecord(entry.variants)
-    const variants = Object.entries(rawVariants).map(([id, settings]) => ({
+    const openAIVariants = Object.entries(rawVariants).map(([id, settings]) => ({
       id: id as Model.VariantID,
       settings: asRecord(settings),
     })) as Model.Info['variants']
     const pkg = responsesIds.has(modelID) ? RESPONSES_PACKAGE : options.providerPackage
+    const variants = ANTHROPIC_PACKAGES.has(pkg)
+      ? anthropicVariants(openAIVariants, hints[modelID])
+      : openAIVariants
     const compatibility = resolveCompatibility(
       inferCompatibility(hints[modelID], CHAT_COMPLETIONS_PACKAGES.has(pkg)),
       Object.hasOwn(overrides, modelID) ? overrides[modelID] : undefined,

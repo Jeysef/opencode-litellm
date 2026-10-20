@@ -71,6 +71,8 @@ export interface LiteLLMModelInfo {
   supported_openai_params?: string[] | null
   supports_pdf_input?: boolean
   supports_audio_input?: boolean
+  supports_adaptive_thinking?: boolean
+  thinking_always_on?: boolean
   input_cost_per_token?: number
   output_cost_per_token?: number
   cache_read_input_token_cost?: number

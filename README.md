@@ -245,6 +245,31 @@ between effort levels from the model picker without hand-curating every entry.
 > `mode: "responses"` the plugin routes it to `/v1/responses` automatically;
 > otherwise reach it without `reasoningEffort`. See the FAQ entry below.
 
+On OpenCode 2, models whose effective package is `@opencode/ai/providers/anthropic`
+or `@opencode/ai/providers/anthropic-compatible` get the same levels in the
+shape that runtime reads, `{ thinking: { type: "adaptive", display: "summarized" }, effort }`,
+for models LiteLLM reports with `supports_adaptive_thinking`, with `none`
+becoming `thinking: { type: "disabled" }` (dropped when `thinking_always_on`).
+Models without adaptive thinking get no variants on those packages, since
+`reasoningEffort` would be ignored there. To reach Claude over the proxy's
+`/v1/messages` while the rest of the catalog keeps its usual transport, split it
+with [`includeModels`/`excludeModels`](#splitting-one-proxy-into-multiple-providers-includemodels--excludemodels):
+
+```jsonc
+{
+  "providers": {
+    "litellm": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "http://localhost:4000/v1", "excludeModels": ["*claude*"] }
+    },
+    "litellm-claude": {
+      "package": "@opencode/ai/providers/anthropic-compatible",
+      "settings": { "baseURL": "http://localhost:4000/v1", "includeModels": ["*claude*"] }
+    }
+  }
+}
+```
+
 ### Responses API models
 
 LiteLLM reports `mode` per model on `/v1/model/info` (the plugin fetches it

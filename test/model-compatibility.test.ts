@@ -4,6 +4,13 @@ import {
   parseModelCompatibility,
   resolveCompatibility,
 } from '../src/utils/model-compatibility'
+import type { ModelHints } from '../src/utils/model-cache'
+
+const hints = (acceptsCacheControl: boolean): ModelHints => ({
+  acceptsCacheControl,
+  adaptiveThinking: false,
+  thinkingAlwaysOn: false,
+})
 
 describe('parseModelCompatibility', () => {
   it('returns an empty map for non-object input', () => {
@@ -42,13 +49,13 @@ describe('parseModelCompatibility', () => {
 
 describe('inferCompatibility', () => {
   it('asks Chat Completions for Anthropic cache markers when the proxy accepts them', () => {
-    expect(inferCompatibility({ acceptsCacheControl: true }, true)).toEqual({ cacheFormat: 'anthropic' })
+    expect(inferCompatibility(hints(true), true)).toEqual({ cacheFormat: 'anthropic' })
   })
 
   it('infers nothing without the hint or outside Chat Completions', () => {
-    expect(inferCompatibility({ acceptsCacheControl: false }, true)).toEqual({})
+    expect(inferCompatibility(hints(false), true)).toEqual({})
     expect(inferCompatibility(undefined, true)).toEqual({})
-    expect(inferCompatibility({ acceptsCacheControl: true }, false)).toEqual({})
+    expect(inferCompatibility(hints(true), false)).toEqual({})
   })
 })
 

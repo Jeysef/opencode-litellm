@@ -333,7 +333,8 @@ export function toConfigModel(
  * config (or translated into `Model.Info` on OpenCode 2). `responsesIds`
  * lists the subset that must be invoked through the OpenAI Responses API;
  * callers route those accordingly without inspecting each entry. `hints`
- * carries per-model upstream facts OpenCode 2 maps to `compatibility`.
+ * carries per-model upstream facts OpenCode 2 maps to `compatibility` and
+ * `variants`.
  */
 export interface DiscoveredModels {
   models: Record<string, unknown>
@@ -447,6 +448,8 @@ export async function discoverModels(
     const params = info?.supported_openai_params
     hints[model.id] = {
       acceptsCacheControl: Array.isArray(params) && params.includes('cache_control'),
+      adaptiveThinking: info?.supports_adaptive_thinking === true,
+      thinkingAlwaysOn: info?.thinking_always_on === true,
     }
   }
 

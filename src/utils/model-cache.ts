@@ -5,8 +5,9 @@ import { join } from 'node:path'
 
 /**
  * Facts about a discovered model's upstream that OpenCode 2 turns into
- * `Model.Info.compatibility`. They ride alongside the config-shaped model
- * entries (which have no field for them) through discovery and the cache.
+ * `Model.Info.compatibility` and `variants`. They ride alongside the
+ * config-shaped model entries (which have no field for them) through
+ * discovery and the cache.
  */
 export interface ModelHints {
   /**
@@ -14,6 +15,13 @@ export interface ModelHints {
    * Chat Completions (`supported_openai_params` lists `cache_control`).
    */
   acceptsCacheControl: boolean
+  /**
+   * The model takes `thinking: { type: "adaptive" }` plus an `effort` level
+   * (`supports_adaptive_thinking`).
+   */
+  adaptiveThinking: boolean
+  /** Thinking cannot be turned off (`thinking_always_on`). */
+  thinkingAlwaysOn: boolean
 }
 
 /**
@@ -21,7 +29,7 @@ export interface ModelHints {
  * from older plugin versions are ignored rather than deserialized into
  * an incompatible structure.
  */
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 
 /**
  * Maximum age of a cache entry before it's treated as a miss. Without a
@@ -158,8 +166,12 @@ function normalizeHints(value: unknown): Record<string, ModelHints> {
   const out: Record<string, ModelHints> = {}
   for (const [id, hint] of Object.entries(value as Record<string, unknown>)) {
     if (!hint || typeof hint !== 'object' || Array.isArray(hint)) continue
-    const { acceptsCacheControl } = hint as Record<string, unknown>
-    out[id] = { acceptsCacheControl: acceptsCacheControl === true }
+    const { acceptsCacheControl, adaptiveThinking, thinkingAlwaysOn } = hint as Record<string, unknown>
+    out[id] = {
+      acceptsCacheControl: acceptsCacheControl === true,
+      adaptiveThinking: adaptiveThinking === true,
+      thinkingAlwaysOn: thinkingAlwaysOn === true,
+    }
   }
   return out
 }
